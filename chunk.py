@@ -28,9 +28,20 @@ def parse_textract_layout_to_chunks(textract_response, document_id):
     # --- Step A: Extract Tables (High Value) ---
     for block in blocks:
         if block['BlockType'] == 'TABLE':
-            if 'Relationships' not in block: continue
+            # Safety Check: Ensure table has children (cells)
+            if 'Relationships' not in block:
+                continue
             
-            cell_ids = [rel['Ids'] for rel in block['Relationships'] if rel['Type'] == 'CHILD'][0]
+            # Extract Cell IDs safely
+            cell_ids = []
+            for rel in block['Relationships']:
+                if rel['Type'] == 'CHILD':
+                    cell_ids = rel['Ids']
+                    break
+            
+            if not cell_ids:
+                continue
+
             cells_data = []
             
             for cell_id in cell_ids:
@@ -46,18 +57,37 @@ def parse_textract_layout_to_chunks(textract_response, document_id):
                 
                 cells_data.append({
                     'r': cell['RowIndex'], 
-                    'c': cell['ColumnIndex'], 
+                    'c': cell['ColumnIndex'],
+                    'rs': cell.get('RowSpan', 1),
+                    'cs': cell.get('ColumnSpan', 1),
                     'text': " ".join(cell_text_words)
                 })
 
             if not cells_data: continue
             
-            # Build Markdown Table
-            max_row = max(c['r'] for c in cells_data)
-            max_col = max(c['c'] for c in cells_data)
+            # Build Markdown Table with Merged Cell Support
+            # 1. Calculate grid dimensions taking spans into account
+            max_row = 0
+            max_col = 0
+            for c in cells_data:
+                max_row = max(max_row, c['r'] + c['rs'] - 1)
+                max_col = max(max_col, c['c'] + c['cs'] - 1)
+
             grid = [['' for _ in range(max_col)] for _ in range(max_row)]
-            for c in cells_data: grid[c['r']-1][c['c']-1] = c['text']
             
+            # 2. Fill grid, replicating text for merged cells
+            for c in cells_data:
+                text = c['text']
+                r_start = c['r'] - 1
+                c_start = c['c'] - 1
+                
+                for r_offset in range(c['rs']):
+                    for c_offset in range(c['cs']):
+                        # Avoid out of bounds if Textract data is wonky
+                        if r_start + r_offset < max_row and c_start + c_offset < max_col:
+                            grid[r_start + r_offset][c_start + c_offset] = text
+            
+            # 3. Generate Markdown
             md_lines = ["| " + " | ".join(grid[0]) + " |", "| " + " | ".join(['---'] * max_col) + " |"]
             for row in grid[1:]: md_lines.append("| " + " | ".join(row) + " |")
             
