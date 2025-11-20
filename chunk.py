@@ -236,16 +236,43 @@ def get_full_results(job_id):
 if __name__ == "__main__":
     # 1. Start
     try:
-        job_id = start_job(BUCKET_NAME, DOCUMENT_KEY)
-        
-        # 2. Wait & Aggregate
-        full_response = get_full_results(job_id)
-        
-        # 3. Parse
-        # Use filename as ID, or generate a UUID here
-        doc_id = DOCUMENT_KEY.split('/')[-1] 
-        
-        vector_ready_chunks = parse_textract_layout_to_chunks(full_response, doc_id)
+        # Check file extension
+        if DOCUMENT_KEY.lower().endswith('.docx'):
+            print(f"Detected DOCX file: {DOCUMENT_KEY}")
+            # For local testing, we assume the file is available locally or needs to be downloaded.
+            # Since the user asked "How can I do it for docx", and the script uses S3, 
+            # we might need to download it from S3 if it's there, or just read it if it's a local path.
+            # The current script has BUCKET_NAME and DOCUMENT_KEY. 
+            # Let's assume we download it from S3 to a temp file for processing, 
+            # OR if the user provides a local path, we use that.
+            # Given the context of "textract-chunking", it's likely S3 based.
+            
+            import os
+            local_filename = os.path.basename(DOCUMENT_KEY)
+            
+            # Check if file exists locally, if not try to download from S3
+            if not os.path.exists(local_filename):
+                print(f"Downloading {DOCUMENT_KEY} from S3...")
+                s3 = boto3.client('s3', region_name=REGION)
+                s3.download_file(BUCKET_NAME, DOCUMENT_KEY, local_filename)
+            
+            from docx_parser import parse_docx_to_chunks
+            
+            doc_id = DOCUMENT_KEY.split('/')[-1]
+            vector_ready_chunks = parse_docx_to_chunks(local_filename, doc_id)
+            
+        else:
+            # PDF / Textract Flow
+            job_id = start_job(BUCKET_NAME, DOCUMENT_KEY)
+            
+            # 2. Wait & Aggregate
+            full_response = get_full_results(job_id)
+            
+            # 3. Parse
+            # Use filename as ID, or generate a UUID here
+            doc_id = DOCUMENT_KEY.split('/')[-1] 
+            
+            vector_ready_chunks = parse_textract_layout_to_chunks(full_response, doc_id)
         
         # 4. Output / Load to Vector DB
         print(f"\n--- Success! Created {len(vector_ready_chunks)} Chunks ---")
